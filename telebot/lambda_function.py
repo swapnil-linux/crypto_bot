@@ -43,10 +43,30 @@ def overallstats(accountid, chat_id):
     )
 
     profits = bots_data['profits_in_usd']
-    message = "Overall Stats for  " + accountid
+    overall_gains = bots_data['overall_stats']
+    todays_gain = bots_data['today_stats']
+
+    message = "---------------------------------------"
+    message += "\nOverall Stats in USD for " + accountid
+    message += "\n--------------------------------------"
     for key, value in profits.items():
         amount = "${:,.2f}".format(value)
         message += "\n" + key + ": " + amount
+
+    message += "\n\n-------------------------------"
+    message += "\nOverall Gains"
+    message += "\n-------------------------------"
+    for key, value in overall_gains.items():
+        #amount = "${:,.2f}".format(value)
+        message += "\n" + key + ": " + value
+
+    message += "\n\n-------------------------------"
+    message += "\nTodays Gain"
+    message += "\n-------------------------------"
+    for key, value in todays_gain.items():
+        #amount = "${:,.2f}".format(value)
+        message += "\n" + key + ": " + value
+
     send_message(message, chat_id)
 
 def closeddeals(accountid, chat_id):
@@ -58,14 +78,16 @@ def closeddeals(accountid, chat_id):
         'limit': 5
         }
     )
-    message = "Last 5 Closed Deals for " + accountid
+    message = "----------------------------------------"
+    message += "\nLast 5 Closed Deals for " + accountid
+    message += "\n----------------------------------------"
     for datapoint_deals in deals_data:
         pair = str(datapoint_deals['pair'])
         amount = str(round(float(datapoint_deals['bought_volume']),2))
         profit_percentage = str(datapoint_deals['final_profit_percentage'])
         profit = str(round(float(datapoint_deals['usd_final_profit']),2))
         closedat = str(datapoint_deals['closed_at'])
-        message += "\n" + pair + "($"+ amount +")" + ": Profit:$" + profit + "(" + profit_percentage + "%) Closed At: " + closedat
+        message += "\n - " + pair + "($"+ amount +")" + ": Profit:$" + profit + "(" + profit_percentage + "%) Closed At: " + closedat
     send_message(message, chat_id)
 
 def activedeals(accountid, chat_id):
@@ -76,14 +98,16 @@ def activedeals(accountid, chat_id):
         'scope': 'active',
         }
     )
-    message = "Current Active Deals for " + accountid
+    message = "----------------------------------------"
+    message += "\nCurrent Active Deals for " + accountid
+    message += "\n----------------------------------------"
     for datapoint_deals in deals_data:
         pair = str(datapoint_deals['pair'])
         amount = str(round(float(datapoint_deals['bought_volume']),2))
         profit_percentage = str(datapoint_deals['actual_profit_percentage'])
         profit = str(round(float(datapoint_deals['actual_usd_profit']),2))
         created = str(datapoint_deals['created_at'])
-        message += "\n" + pair + "($"+ amount +")" + ": Profit:$" + profit + "(" + profit_percentage + "%)"
+        message += "\n - " + pair + "($"+ amount +")" + ": Profit:$" + profit + "(" + profit_percentage + "%)"
     send_message(message, chat_id)
 
 def lambda_handler(event, context):
