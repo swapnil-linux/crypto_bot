@@ -23,7 +23,7 @@ p3cw = Py3CW(
 )
 
 def send_message(text, chat_id):
-    url = URL + "sendMessage?text={}&chat_id={}&parse_mode=Markdown".format(text, chat_id)
+    url = URL + "sendMessage?text={}&chat_id={}".format(text, chat_id)
     requests.get(url)
 
 def start(arguments, chat_id):
@@ -43,10 +43,48 @@ def overallstats(accountid, chat_id):
     )
 
     profits = bots_data['profits_in_usd']
+    message = "Overall Stats for  " + accountid
     for key, value in profits.items():
         amount = "${:,.2f}".format(value)
-        send_message(key + ": " + amount, chat_id)
+        message += "\n" + key + ": " + amount
+    send_message(message, chat_id)
 
+def closeddeals(accountid, chat_id):
+    error, deals_data = p3cw.request(
+        entity = 'deals',
+        payload={
+        'account_id': accountid,
+        'scope': 'completed',
+        'limit': 5
+        }
+    )
+    message = "Last 5 Closed Deals for " + accountid
+    for datapoint_deals in deals_data:
+        pair = str(datapoint_deals['pair'])
+        amount = str(round(float(datapoint_deals['bought_volume']),2))
+        profit_percentage = str(datapoint_deals['final_profit_percentage'])
+        profit = str(round(float(datapoint_deals['usd_final_profit']),2))
+        closedat = str(datapoint_deals['closed_at'])
+        message += "\n" + pair + "($"+ amount +")" + ": Profit:$" + profit + "(" + profit_percentage + "%) Closed At: " + closedat
+    send_message(message, chat_id)
+
+def activedeals(accountid, chat_id):
+    error, deals_data = p3cw.request(
+        entity = 'deals',
+        payload={
+        'account_id': accountid,
+        'scope': 'active',
+        }
+    )
+    message = "Current Active Deals for " + accountid
+    for datapoint_deals in deals_data:
+        pair = str(datapoint_deals['pair'])
+        amount = str(round(float(datapoint_deals['bought_volume']),2))
+        profit_percentage = str(datapoint_deals['actual_profit_percentage'])
+        profit = str(round(float(datapoint_deals['actual_usd_profit']),2))
+        created = str(datapoint_deals['created_at'])
+        message += "\n" + pair + "($"+ amount +")" + ": Profit:$" + profit + "(" + profit_percentage + "%)"
+    send_message(message, chat_id)
 
 def lambda_handler(event, context):
     chat_id = event['message']['chat']['id']
@@ -63,10 +101,13 @@ def lambda_handler(event, context):
             send_message('Hi ' + str(user.first_name) + ' you are not authorised to use this service',chat_id)
     elif command == "/overallstats":
             overallstats(accountid,chat_id)
+    elif command == "/closeddeals":
+            closeddeals(accountid,chat_id)
+    elif command == "/activedeals":
+            activedeals(accountid,chat_id)
     else:
         send_message("Command not support", chat_id)
 
     return {
         'statusCode': 200,
-        'body': json.dumps('Bot Stopped')
     }
