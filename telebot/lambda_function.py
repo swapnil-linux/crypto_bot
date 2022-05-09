@@ -51,7 +51,7 @@ def overallstats(accountid, chat_id):
     message += "\n--------------------------------------"
     for key, value in profits.items():
         amount = "${:,.2f}".format(value)
-        message += "\n" + key + ": " + amount
+        message += "\n" + key.replace("_", " ") + ": " + amount
 
     message += "\n\n-------------------------------"
     message += "\nOverall Gains"
