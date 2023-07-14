@@ -1,8 +1,14 @@
+# https://gitlab.com/gitlab-org/gitlab/-/tree/master/lib/gitlab/ci/templates/Security
+# https://docs.gitlab.com/ee/user/application_security/
 include:
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
-  - template: Security/License-Scanning.gitlab-ci.yml
-  - template: Security/SAST.gitlab-ci.yml
-  - template: Security/Secret-Detection.gitlab-ci.yml
-  - template: Coverage-Fuzzing.gitlab-ci.yml
+  - template: Terraform/Base.gitlab-ci.yml  # For IaC
+  - template: Security/SAST-IaC.gitlab-ci.yml   # For IaC
+  - template: Security/Dependency-Scanning.gitlab-ci.yml # For All
+  - template: Security/License-Scanning.gitlab-ci.yml # For All
+  - template: Security/SAST.gitlab-ci.yml # For App
+  - template: Security/Secret-Detection.gitlab-ci.yml # For App
+  - template: BAS.latest.gitlab-ci.yml # For App
 
+variables:
+  DS_INCLUDE_DEV_DEPENDENCIES=0
 
