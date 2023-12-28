@@ -37,11 +37,12 @@ This Python script generates trading signals for a list of tickers based on Boll
 Run the script using the following command:
 
 ```shell
-python ttm.py [--all] [--snp500]
+python ttm.py [--all] [--snp500] [--nifty50]
 ```
 
-- `--all`: Reads ticker values from the `nasdaq_all.txt` file.
-- `--snp500`: Reads ticker values from the `snp500.txt` file.
+- `--all`: Reads from `nasdaq_all.txt`.
+- `--snp500`: Reads from `snp500.txt`.
+- `--nifty50`: Reads from `nifty50.txt`.
 - If no arguments are provided, it defaults to reading ticker values from the `snp500.txt` file.
 
 The script processes the data for each ticker and displays the tickers along with the last price and trading signals in a tabular format.
