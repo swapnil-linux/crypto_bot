@@ -45,7 +45,7 @@ def process_ticker(ticker):
         mom = (df['Close'] - avg).rolling(window=length).apply(lambda x: np.polyfit(range(length), x, 1)[0], raw=False)
 
         # get last price
-        last_price = round(df['Close'][-1], 2)
+        last_price = round(df['Close'].iloc[-1], 2)
 
         # DEFINE BUY SIGNAL
         df['in_squeeze'] = (LowSqz | MidSqz | HighSqz).astype(int)
@@ -67,12 +67,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--all', action='store_true', help='Read from nasdaq_all.txt')
     parser.add_argument('--snp500', action='store_true', help='Read from snp500.txt')
+    parser.add_argument('--nifty50', action='store_true', help='Read from nifty50.txt')
     args = parser.parse_args()
 
     if args.all:
         file_name = 'nasdaq_all.txt'
     elif args.snp500:
         file_name = 'snp500.txt'
+    elif args.nifty50:
+        file_name = 'nifty50.txt'
     else:
         file_name = 'snp500.txt'  # Default to snp500.txt if no arguments provided
 
