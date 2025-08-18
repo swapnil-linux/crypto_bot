@@ -2,53 +2,55 @@
 # -*- coding: utf-8 -*-
 
 """
-Squeeze scanner with Bollinger Bands + Keltner Channels and breakout filter.
+TTM Squeeze-style breakout scanner.
 
 Requirements:
   pip install pandas numpy yfinance ta prettytable tqdm
-
-Notes:
-- Uses 'ta' (technical-analysis) library, not pandas-ta.
-- ATR via ta.volatility.AverageTrueRange.
-- Keltner basis uses EMA; Bollinger uses population std (ddof=0).
 """
 
 import os
 import argparse
-import pandas as pd
+from dataclasses import dataclass
+import warnings
+
 import numpy as np
+import pandas as pd
 import yfinance as yf
 from prettytable import PrettyTable
 from tqdm import tqdm
 from multiprocessing import Pool
-import warnings
 
-# Optional: quiet down numpy polyfit RankWarning on flat windows
-warnings.simplefilter("ignore", np.RankWarning)
-
-# -----------------------------
-# Defaults (overridable by CLI)
-# -----------------------------
-LENGTH = 20
-BB_MULT = 2.0
-KC_MULT_HIGH = 1.0
-KC_MULT_MID = 1.5
-KC_MULT_LOW = 2.0
-SQUEEZE_BARS = 7
-MAX_WORKERS = 8
-
-# Lazy import so the script prints a nicer message if 'ta' is missing
 try:
     import ta
 except Exception as e:
-    raise SystemExit(
-        "The 'ta' library is required. Install with:\n  pip install ta\n\n"
-        f"Import error: {e}"
-    )
+    raise SystemExit("Install 'ta' with: pip install ta\n" + str(e))
+
+
+# -----------------------------
+# Parameters bag
+# -----------------------------
+@dataclass(frozen=True)
+class Params:
+    length: int = 20
+    bb_mult: float = 2.0
+    kc_mult_high: float = 1.0
+    kc_mult_mid: float = 1.5
+    kc_mult_low: float = 2.0
+    squeeze_bars: int = 7
+    auto_adjust: bool = True
+
+
+PARAMS = Params()
+VERBOSE = False
+
+
+def _init_pool(params: Params, verbose: bool):
+    global PARAMS, VERBOSE
+    PARAMS = params
+    VERBOSE = verbose
 
 
 def safe_base_dir() -> str:
-    """Handle __file__ not existing in some environments."""
     return (
         os.path.dirname(os.path.abspath(__file__))
         if "__file__" in globals()
@@ -66,24 +68,21 @@ def read_tickers(file_name: str) -> list[str]:
     return tickers
 
 
-def compute_bollinger(close: pd.Series, length: int, mult: float) -> tuple[pd.Series, pd.Series, pd.Series]:
+def compute_bollinger(close: pd.Series, length: int, mult: float):
     basis = close.rolling(length).mean()
-    dev = mult * close.rolling(length).std(ddof=0)  # population std for consistency
+    dev = mult * close.rolling(length).std(ddof=0)
     upper = basis + dev
     lower = basis - dev
     return basis, upper, lower
 
 
 def compute_keltner(df: pd.DataFrame, length: int,
-                    mult_high: float, mult_mid: float, mult_low: float) -> dict:
-    # Common definitions use an EMA for the central line
+                    mult_high: float, mult_mid: float, mult_low: float):
     basis = df["Close"].ewm(span=length, adjust=False).mean()
-
     atr = ta.volatility.AverageTrueRange(
         high=df["High"], low=df["Low"], close=df["Close"], window=length
     ).average_true_range()
-
-    levels = {
+    return {
         "basis": basis,
         "upper_high": basis + atr * mult_high,
         "lower_high": basis - atr * mult_high,
@@ -92,19 +91,12 @@ def compute_keltner(df: pd.DataFrame, length: int,
         "upper_low":  basis + atr * mult_low,
         "lower_low":  basis - atr * mult_low,
     }
-    return levels
 
 
 def linear_reg_slope(series: pd.Series, length: int) -> pd.Series:
-    """
-    Rolling linear regression slope using numpy.polyfit on a sliding window.
-    Slope of (series) over window indexes 0..length-1.
-    """
     idx = np.arange(length)
 
     def _slope(window: np.ndarray) -> float:
-        # window is a numpy array, length == length
-        # polyfit returns slope, intercept; we want slope
         return float(np.polyfit(idx, window, 1)[0])
 
     return series.rolling(length).apply(_slope, raw=True)
@@ -112,60 +104,57 @@ def linear_reg_slope(series: pd.Series, length: int) -> pd.Series:
 
 def process_ticker(ticker: str):
     try:
-        df = yf.download(ticker, period="1y", interval="1d", progress=False)
+        p = PARAMS
+        df = yf.download(
+            ticker,
+            period="1y",
+            interval="1d",
+            progress=False,
+            auto_adjust=p.auto_adjust,
+        )
 
-        # Basic sanity: need enough bars for indicators and EMA stack
-        min_len = max(LENGTH + 21, LENGTH + SQUEEZE_BARS + 2)
+        min_len = max(p.length + 21, p.length + p.squeeze_bars + 2)
         if df is None or df.empty or len(df) < min_len:
             return None
 
-        # Bollinger
-        bb_basis, bb_upper, bb_lower = compute_bollinger(df["Close"], LENGTH, BB_MULT)
+        _, bb_upper, bb_lower = compute_bollinger(df["Close"], p.length, p.bb_mult)
+        kc = compute_keltner(df, p.length, p.kc_mult_high, p.kc_mult_mid, p.kc_mult_low)
 
-        # Keltner
-        kc = compute_keltner(
-            df,
-            length=LENGTH,
-            mult_high=KC_MULT_HIGH,
-            mult_mid=KC_MULT_MID,
-            mult_low=KC_MULT_LOW,
-        )
-
-        # Squeeze conditions (three compression tiers)
         low_sqz = (bb_lower >= kc["lower_low"]) & (bb_upper <= kc["upper_low"])
         mid_sqz = (bb_lower >= kc["lower_mid"]) & (bb_upper <= kc["upper_mid"])
         high_sqz = (bb_lower >= kc["lower_high"]) & (bb_upper <= kc["upper_high"])
-
         df["in_squeeze"] = (low_sqz | mid_sqz | high_sqz).astype(int)
 
-        # Momentum proxy: slope of (close - mid of rolling high/low)
-        avg = (df["High"].rolling(LENGTH).max() + df["Low"].rolling(LENGTH).min()) / 2.0
+        avg = (df["High"].rolling(p.length).max() + df["Low"].rolling(p.length).min()) / 2.0
         mom_input = df["Close"] - avg
-        mom = linear_reg_slope(mom_input, LENGTH)
+        mom = linear_reg_slope(mom_input, p.length)
 
-        # Trend filter
         ema8 = df["Close"].ewm(span=8, adjust=False).mean()
         ema21 = df["Close"].ewm(span=21, adjust=False).mean()
 
-        # "Prior N bars all squeeze" and "just exited today"
-        prior_all_sqz = df["in_squeeze"].shift(1).rolling(SQUEEZE_BARS, min_periods=SQUEEZE_BARS).min() == 1
+        prior_all_sqz = df["in_squeeze"].shift(1).rolling(p.squeeze_bars, min_periods=p.squeeze_bars).min() == 1
         just_exited = (df["in_squeeze"].shift(1) == 1) & (df["in_squeeze"] == 0)
 
-        df["buy_signal"] = (
-            prior_all_sqz
-            & just_exited
-            & (mom > 0)
-            & (df["Close"] > ema8)
-            & (ema8 > ema21)
-        )
+        df["buy_signal"] = prior_all_sqz & just_exited & (mom > 0) & (df["Close"] > ema8) & (ema8 > ema21)
 
         if bool(df["buy_signal"].iloc[-1]):
             last_price = round(float(df["Close"].iloc[-1]), 2)
             return [ticker, last_price, "LONG"]
+
+        if VERBOSE:
+            debug = {
+                "prior_all_sqz": bool(prior_all_sqz.iloc[-1]),
+                "just_exited": bool(just_exited.iloc[-1]),
+                "mom>0": bool((mom > 0).iloc[-1]),
+                "close>ema8": bool((df["Close"] > ema8).iloc[-1]),
+                "ema8>ema21": bool((ema8 > ema21).iloc[-1]),
+                "in_squeeze": int(df["in_squeeze"].iloc[-1]),
+            }
+            print(f"{ticker}: NO SIGNAL -> {debug}")
+
         return None
 
     except Exception as e:
-        # Return an error row so failures are visible instead of silently dropped
         return [ticker, f"Error: {str(e)}", "ERROR"]
 
 
@@ -176,16 +165,20 @@ def main():
     group.add_argument("--snp500", action="store_true", help="Read from snp500.txt")
     group.add_argument("--nifty50", action="store_true", help="Read from nifty50.txt")
     parser.add_argument("--file", help="Custom ticker file path")
-    parser.add_argument("--length", type=int, default=LENGTH, help="Lookback length (default: 20)")
-    parser.add_argument("--bb-mult", type=float, default=BB_MULT, help="Bollinger multiplier (default: 2.0)")
-    parser.add_argument("--kc-high", type=float, default=KC_MULT_HIGH, help="Keltner high multiplier (default: 1.0)")
-    parser.add_argument("--kc-mid", type=float, default=KC_MULT_MID, help="Keltner mid multiplier (default: 1.5)")
-    parser.add_argument("--kc-low", type=float, default=KC_MULT_LOW, help="Keltner low multiplier (default: 2.0)")
-    parser.add_argument("--squeeze-bars", type=int, default=SQUEEZE_BARS, help="Bars required in squeeze before breakout (default: 7)")
-    parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Max parallel workers (default: 8)")
+
+    parser.add_argument("--length", type=int, default=Params.length, help="Lookback length (default: 20)")
+    parser.add_argument("--bb-mult", type=float, default=Params.bb_mult, help="Bollinger multiplier (default: 2.0)")
+    parser.add_argument("--kc-high", type=float, default=Params.kc_mult_high, help="Keltner high multiplier (default: 1.0)")
+    parser.add_argument("--kc-mid", type=float, default=Params.kc_mult_mid, help="Keltner mid multiplier (default: 1.5)")
+    parser.add_argument("--kc-low", type=float, default=Params.kc_mult_low, help="Keltner low multiplier (default: 2.0)")
+    parser.add_argument("--squeeze-bars", type=int, default=Params.squeeze_bars, help="Bars in squeeze before breakout (default: 7)")
+    parser.add_argument("--auto-adjust", type=lambda s: s.lower() == "true", default="True",
+                        help="yfinance auto_adjust (True/False, default: True)")
+    parser.add_argument("--max-workers", type=int, default=8, help="Max parallel workers (default: 8)")
+    parser.add_argument("--verbose", action="store_true", help="Print diagnostics even when no signal")
+
     args = parser.parse_args()
 
-    # Which ticker file
     if args.file:
         file_name = args.file
     elif args.all:
@@ -195,40 +188,34 @@ def main():
     elif args.nifty50:
         file_name = "nifty50.txt"
     else:
-        file_name = "snp500.txt"  # default
+        file_name = "snp500.txt"
 
-    # Apply CLI overrides to globals used in worker processes
-    global LENGTH, BB_MULT, KC_MULT_HIGH, KC_MULT_MID, KC_MULT_LOW, SQUEEZE_BARS
-    LENGTH = args.length
-    BB_MULT = args.bb_mult
-    KC_MULT_HIGH = args.kc_high
-    KC_MULT_MID = args.kc_mid
-    KC_MULT_LOW = args.kc_low
-    SQUEEZE_BARS = args.squeeze_bars
+    params = Params(
+        length=args.length,
+        bb_mult=args.bb_mult,
+        kc_mult_high=args.kc_high,
+        kc_mult_mid=args.kc_mid,
+        kc_mult_low=args.kc_low,
+        squeeze_bars=args.squeeze_bars,
+        auto_adjust=(args.auto_adjust if isinstance(args.auto_adjust, bool) else args.auto_adjust.lower() == "true"),
+    )
 
-    # Concurrency guard
     cpu = os.cpu_count() or 1
-    max_workers = max(1, min(args.max_workers, 8, cpu))  # be polite to Yahoo
+    max_workers = max(1, min(args.max_workers, 8, cpu))
 
-    # Read tickers
     tickers = read_tickers(file_name)
 
-    # Output table
     table = PrettyTable()
     table.field_names = ["Ticker", "Last Price", "Signal"]
 
-    # Pool processing
-    with Pool(max_workers) as p:
+    with Pool(processes=max_workers, initializer=_init_pool, initargs=(params, args.verbose)) as p:
         for result in tqdm(
             p.imap_unordered(process_ticker, tickers),
             total=len(tickers),
             unit="ticker",
             desc="Scanning",
         ):
-            if result is None:
-                continue
-            # Show only LONG signals in the final table
-            if result[2] == "LONG":
+            if result and result[2] == "LONG":
                 table.add_row(result)
 
     print(table)
