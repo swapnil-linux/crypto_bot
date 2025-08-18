@@ -179,4 +179,60 @@ def main():
     parser.add_argument("--length", type=int, default=LENGTH, help="Lookback length (default: 20)")
     parser.add_argument("--bb-mult", type=float, default=BB_MULT, help="Bollinger multiplier (default: 2.0)")
     parser.add_argument("--kc-high", type=float, default=KC_MULT_HIGH, help="Keltner high multiplier (default: 1.0)")
-    parser.add_argumen_
+    parser.add_argument("--kc-mid", type=float, default=KC_MULT_MID, help="Keltner mid multiplier (default: 1.5)")
+    parser.add_argument("--kc-low", type=float, default=KC_MULT_LOW, help="Keltner low multiplier (default: 2.0)")
+    parser.add_argument("--squeeze-bars", type=int, default=SQUEEZE_BARS, help="Bars required in squeeze before breakout (default: 7)")
+    parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Max parallel workers (default: 8)")
+    args = parser.parse_args()
+
+    # Which ticker file
+    if args.file:
+        file_name = args.file
+    elif args.all:
+        file_name = "nasdaq_all.txt"
+    elif args.snp500:
+        file_name = "snp500.txt"
+    elif args.nifty50:
+        file_name = "nifty50.txt"
+    else:
+        file_name = "snp500.txt"  # default
+
+    # Apply CLI overrides to globals used in worker processes
+    global LENGTH, BB_MULT, KC_MULT_HIGH, KC_MULT_MID, KC_MULT_LOW, SQUEEZE_BARS
+    LENGTH = args.length
+    BB_MULT = args.bb_mult
+    KC_MULT_HIGH = args.kc_high
+    KC_MULT_MID = args.kc_mid
+    KC_MULT_LOW = args.kc_low
+    SQUEEZE_BARS = args.squeeze_bars
+
+    # Concurrency guard
+    cpu = os.cpu_count() or 1
+    max_workers = max(1, min(args.max_workers, 8, cpu))  # be polite to Yahoo
+
+    # Read tickers
+    tickers = read_tickers(file_name)
+
+    # Output table
+    table = PrettyTable()
+    table.field_names = ["Ticker", "Last Price", "Signal"]
+
+    # Pool processing
+    with Pool(max_workers) as p:
+        for result in tqdm(
+            p.imap_unordered(process_ticker, tickers),
+            total=len(tickers),
+            unit="ticker",
+            desc="Scanning",
+        ):
+            if result is None:
+                continue
+            # Show only LONG signals in the final table
+            if result[2] == "LONG":
+                table.add_row(result)
+
+    print(table)
+
+
+if __name__ == "__main__":
+    main()
