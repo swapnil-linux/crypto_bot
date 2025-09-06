@@ -19,12 +19,6 @@ It supports adjusted/total return calculations, custom fiscal year alignment, an
 
 Clone the repository and install required dependencies:
 
-```bash
-git clone https://github.com/yourusername/history.py.git
-cd history.py
-pip install -r requirements.txt
-```
-
 ### Requirements
 - Python 3.8+
 - pandas
